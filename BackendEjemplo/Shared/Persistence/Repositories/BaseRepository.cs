@@ -16,6 +16,11 @@ namespace BackendEjemplo.Shared.Persistence.Repositories
             await _context.Set<TEntity>().AddAsync(entity, cancellationToken);
         }
 
+        public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken cancellationToken = default)
+        {
+            await _context.Set<TEntity>().AddRangeAsync(entities, cancellationToken);
+        }
+
         protected IQueryable<TEntity> GetQuery(
             Expression<Func<TEntity, bool>>? filter,
             Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>>? orderBy

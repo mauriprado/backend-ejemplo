@@ -255,6 +255,7 @@ namespace BackendEjemplo.Shared.Domain.Repositories
     public interface IBaseRepository<TEntity> where TEntity : class
     {
         Task AddAsync(TEntity entity, CancellationToken cancellationToken = default);
+        Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken cancellationToken = default);
         void Update(TEntity entity);
         void Remove(TEntity entity);
         Task<IEnumerable<TEntity>> ListAsync(
@@ -376,6 +377,16 @@ namespace BackendEjemplo.Shared.Persistence.Repositories
         public virtual async Task AddAsync(TEntity entity, CancellationToken cancellationToken = default)
         {
             await _context.Set<TEntity>().AddAsync(entity, cancellationToken);
+        }
+
+        // IEnumerable<TEntity>, no List<TEntity>: DbSet<TEntity>.AddRangeAsync ya acepta
+        // IEnumerable, así que no hay motivo para forzar al caller a materializar una
+        // List si tiene un array, un HashSet, o el resultado de un LINQ. virtual por la
+        // misma razón que el resto de la clase: un repo concreto podría necesitar
+        // overridearlo (ej. validar duplicados antes de un insert masivo).
+        public virtual async Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken cancellationToken = default)
+        {
+            await _context.Set<TEntity>().AddRangeAsync(entities, cancellationToken);
         }
 
         protected IQueryable<TEntity> GetQuery(
