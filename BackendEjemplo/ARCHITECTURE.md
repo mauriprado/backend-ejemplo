@@ -172,10 +172,26 @@ namespace BackendEjemplo.Shared.Mapping
 {
     public static class PageMappings
     {
+        // Sin mapeo: para bounded contexts que devuelven la entidad directamente sin
+        // Resource propio (ej. BotAudit — ver sección 3, "Sin relación").
         public static PageResponse<TEntity> ToResponse<TEntity>(this Page<TEntity> page)
             where TEntity : class => new()
             {
                 Data = page.Data,
+                PageIndex = page.PageIndex,
+                PageSize = page.PageSize,
+                TotalRecords = page.TotalRecords
+            };
+
+        // Con mapeo: el caso común, cuando el Controller necesita convertir cada
+        // entidad a su Resource antes de responder. Evita repetir a mano el
+        // "new PageResponse<T> { Data = ..., PageIndex = ..., ... }" en cada
+        // Controller — ver el uso en la sección 2.6.
+        public static PageResponse<TResource> ToResponse<TEntity, TResource>(this Page<TEntity> page, Func<TEntity, TResource> mapping)
+            where TEntity : class
+            where TResource : class => new()
+            {
+                Data = page.Data.Select(mapping),
                 PageIndex = page.PageIndex,
                 PageSize = page.PageSize,
                 TotalRecords = page.TotalRecords
@@ -1068,6 +1084,7 @@ public static class <Entity>Mappings
 ### 2.6. Controller
 
 ```csharp
+using BackendEjemplo.Shared.Mapping; // para .ToResponse(...)
 using Microsoft.AspNetCore.Mvc;
 
 namespace BackendEjemplo.<BoundedContext>.Controllers
@@ -1080,13 +1097,10 @@ namespace BackendEjemplo.<BoundedContext>.Controllers
         public async Task<PageResponse<<Entity>Resource>> Get<Entity>sPaginatedAsync([FromQuery] <Entity>PageRequest request, CancellationToken cancellationToken)
         {
             var result = await <entity>Service.ListPageAsync(request, cancellationToken);
-            return new PageResponse<<Entity>Resource>
-            {
-                Data = result.Data.Select(p => p.ToResource()),
-                PageIndex = result.PageIndex,
-                PageSize = result.PageSize,
-                TotalRecords = result.TotalRecords,
-            };
+            // PageMappings.ToResponse(mapping) evita repetir a mano el
+            // "new PageResponse<T> { Data = ..., PageIndex = ..., ... }" en cada
+            // Controller — ver sección 0.5, Shared/Mapping/PageMappings.cs.
+            return result.ToResponse(p => p.ToResource());
         }
 
         [HttpGet("{id}")]

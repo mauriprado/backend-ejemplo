@@ -1,9 +1,11 @@
+using BackendEjemplo.OneToOneExample.Domain.Models;
 using BackendEjemplo.OneToOneExample.Domain.Services;
 using BackendEjemplo.OneToOneExample.Domain.Services.Communication;
 using BackendEjemplo.OneToOneExample.Mapping;
 using BackendEjemplo.OneToOneExample.Resources;
 using BackendEjemplo.Shared.Domain.Services.Communication;
 using BackendEjemplo.Shared.Extensions;
+using BackendEjemplo.Shared.Mapping;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BackendEjemplo.OneToOneExample.Controllers
@@ -16,13 +18,7 @@ namespace BackendEjemplo.OneToOneExample.Controllers
         public async Task<PageResponse<EmployeeResource>> GetEmployeesPaginatedAsync([FromQuery] EmployeePageRequest request, CancellationToken cancellationToken)
         {
             var result = await employeeService.ListPageAsync(request, cancellationToken);
-            return new PageResponse<EmployeeResource>
-            {
-                Data = result.Data.Select(p => p.ToResource()),
-                PageIndex = result.PageIndex,
-                PageSize = result.PageSize,
-                TotalRecords = result.TotalRecords,
-            };
+            return result.ToResponse(p => p.ToResource());
         }
 
         [HttpGet("{id}")]

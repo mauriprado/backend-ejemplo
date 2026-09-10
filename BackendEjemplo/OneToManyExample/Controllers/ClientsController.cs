@@ -6,6 +6,7 @@ using BackendEjemplo.OneToManyExample.Mapping;
 using BackendEjemplo.OneToManyExample.Resources;
 using BackendEjemplo.Shared.Domain.Services.Communication;
 using BackendEjemplo.Shared.Extensions;
+using BackendEjemplo.Shared.Mapping;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BackendEjemplo.OneToManyExample.Controllers
@@ -18,13 +19,7 @@ namespace BackendEjemplo.OneToManyExample.Controllers
         public async Task<PageResponse<ClientResource>> GetClientsPaginatedAsync([FromQuery] ClientPageRequest request, CancellationToken cancellationToken)
         {
             var result = await clientService.ListPageAsync(request, cancellationToken);
-            return new PageResponse<ClientResource>
-            {
-                Data = result.Data.Select(p => p.ToResource()),
-                PageIndex = result.PageIndex,
-                PageSize = result.PageSize,
-                TotalRecords = result.TotalRecords,
-            };
+            return result.ToResponse(p => p.ToResource());
         }
 
         [HttpGet("{id}")]

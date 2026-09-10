@@ -13,5 +13,15 @@ namespace BackendEjemplo.Shared.Mapping
                 PageSize = page.PageSize,
                 TotalRecords = page.TotalRecords
             };
+
+        public static PageResponse<TResource> ToResponse<TEntity, TResource>(this Page<TEntity> page, Func<TEntity, TResource> mapping)
+            where TEntity : class
+            where TResource : class => new()
+            {
+                Data = page.Data.Select(mapping),
+                PageIndex = page.PageIndex,
+                PageSize = page.PageSize,
+                TotalRecords = page.TotalRecords
+            };
     }
 }

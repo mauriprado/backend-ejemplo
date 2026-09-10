@@ -4,6 +4,7 @@ using BackendEjemplo.ManyToManyExample.Mapping;
 using BackendEjemplo.ManyToManyExample.Resources;
 using BackendEjemplo.Shared.Domain.Services.Communication;
 using BackendEjemplo.Shared.Extensions;
+using BackendEjemplo.Shared.Mapping;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BackendEjemplo.ManyToManyExample.Controllers
@@ -16,14 +17,7 @@ namespace BackendEjemplo.ManyToManyExample.Controllers
         public async Task<PageResponse<EnrollmentResource>> GetEnrollmentsPaginatedAsync([FromQuery] EnrollmentPageRequest request, CancellationToken cancellationToken)
         {
             var result = await enrollmentService.ListPageAsync(request, cancellationToken);
-
-            return new PageResponse<EnrollmentResource>
-            {
-                Data = result.Data.Select(p => p.ToResource()),
-                PageIndex = result.PageIndex,
-                PageSize = result.PageSize,
-                TotalRecords = result.TotalRecords
-            };
+            return result.ToResponse(p => p.ToResource());
         }
 
         [HttpPost]

@@ -4,6 +4,7 @@ using BackendEjemplo.OneToManyExample.Mapping;
 using BackendEjemplo.OneToManyExample.Resources;
 using BackendEjemplo.Shared.Domain.Services.Communication;
 using BackendEjemplo.Shared.Extensions;
+using BackendEjemplo.Shared.Mapping;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BackendEjemplo.OneToManyExample.Controllers
@@ -16,15 +17,7 @@ namespace BackendEjemplo.OneToManyExample.Controllers
         public async Task<PageResponse<OrderResource>> GetOrdersPaginatedAsync([FromQuery] OrderPageRequest request, CancellationToken cancellationToken)
         {
             var result = await orderService.ListPageAsync(request, cancellationToken);
-
-            //mapeo a resource
-            return new PageResponse<OrderResource>
-            {
-                Data = result.Data.Select(p => p.ToResource()),
-                PageIndex = result.PageIndex,
-                PageSize = result.PageSize,
-                TotalRecords = result.TotalRecords
-            };
+            return result.ToResponse(p => p.ToResource());
 
         }
 
