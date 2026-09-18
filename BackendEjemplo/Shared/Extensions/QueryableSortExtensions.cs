@@ -3,7 +3,7 @@ using System.Linq.Expressions;
 namespace BackendEjemplo.Shared.Extensions
 {
     // Aplica el ordenamiento pedido por el cliente (SortBy/SortDescending del
-    // BasePageRequest) contra una whitelist de columnas ordenables definida por
+    // BaseSortPageRequest) contra una whitelist de columnas ordenables definida por
     // cada Service. La whitelist es la razón de ser de este helper: evita que el
     // cliente pueda pedir orden por una propiedad de navegación pesada, un campo
     // no expuesto, o un nombre inventado que rompa la query. Si SortBy viene vacío

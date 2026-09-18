@@ -2,7 +2,7 @@
 
 namespace BackendEjemplo.BotAudit.Domain.Services.Communication
 {
-    public class BotLogPageRequest: BasePageRequest
+    public class BotLogPageRequest: BaseSortPageRequest
     {
         public string? Bot {  get; set; }
         public string? Server { get; set; }
