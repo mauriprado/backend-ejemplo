@@ -2,7 +2,7 @@ using BackendEjemplo.Shared.Domain.Services.Communication;
 
 namespace BackendEjemplo.OneToOneExample.Domain.Services.Communication
 {
-    public class EmployeePageRequest: BasePageRequest
+    public class EmployeePageRequest: BaseSortPageRequest
     {
         public string? FullName { get; set; }
         public string? Email { get; set; }

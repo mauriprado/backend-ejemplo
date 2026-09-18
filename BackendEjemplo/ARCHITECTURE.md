@@ -144,6 +144,28 @@ namespace BackendEjemplo.Shared.Domain.Services.Communication
 }
 ```
 
+#### `Shared/Domain/Services/Communication/BaseSortPageRequest.cs`
+
+```csharp
+namespace BackendEjemplo.Shared.Domain.Services.Communication
+{
+    // Extiende BasePageRequest (PageIndex/PageSize) agregándole sorting — no lo
+    // duplica, para que un cambio futuro en la paginación pura no haya que
+    // replicarlo a mano en las dos clases.
+    public class BaseSortPageRequest : BasePageRequest
+    {
+        // Nombre de columna por la que ordenar. Cada Service define su propia
+        // whitelist de columnas ordenables (ver QueryableSortExtensions.ApplySort);
+        // un valor no reconocido o vacío cae al orden por defecto de ese Service,
+        // nunca lanza un error ni permite ordenar por una columna arbitraria.
+        public string? SortBy { get; set; }
+        public bool SortDescending { get; set; } = false;
+    }
+}
+```
+
+Todo `<Entity>PageRequest` extiende `BaseSortPageRequest`, no `BasePageRequest`, salvo que ese listado deba excluir explícitamente el sorting pedido por el cliente (caso raro — hoy los 8 listados existentes lo soportan). `BasePageRequest` queda como la base común de ambas, disponible para ese caso puntual sin tener que pasar por `BaseSortPageRequest`.
+
 #### `Shared/Domain/Services/Communication/PageResponse.cs`
 
 ```csharp
@@ -922,7 +944,7 @@ using BackendEjemplo.Shared.Domain.Services.Communication;
 
 namespace BackendEjemplo.<BoundedContext>.Domain.Services.Communication
 {
-    public class <Entity>PageRequest: BasePageRequest
+    public class <Entity>PageRequest: BaseSortPageRequest
     {
         public string? Name { get; set; }
         // ...un campo opcional (nullable) por cada filtro que el listado debe soportar
@@ -965,7 +987,7 @@ namespace BackendEjemplo.<BoundedContext>.Services
         IUnitOfWork unitOfWork) : I<Entity>Service
     {
         // Whitelist de columnas por las que el cliente puede pedir orden (query params
-        // sortBy/sortDescending, heredados de BasePageRequest — ver sección 4 "Sorting").
+        // sortBy/sortDescending, heredados de BaseSortPageRequest — ver sección 4 "Sorting").
         // Un sortBy no listado acá cae en silencio al defaultColumn de ApplySort, nunca
         // rompe la query ni expone una columna no pensada para ordenar.
         private static readonly Dictionary<string, Expression<Func<<Entity>, object>>> SortableColumns = new(StringComparer.OrdinalIgnoreCase)
@@ -1222,7 +1244,7 @@ Query params: `?pageIndex=0&pageSize=10&sortBy=<columna>&sortDescending=false&<f
 
 ### Sorting
 
-`sortBy`/`sortDescending` viajan en `BasePageRequest`, así que todo listado los soporta sin trabajo extra. Cada `Service` define su propia whitelist de columnas ordenables (`SortableColumns`, ver sección 2.4) y la aplica con `QueryableSortExtensions.ApplySort`. Un `sortBy` vacío o no reconocido **nunca** rompe la query — cae en silencio al orden por defecto de ese listado (normalmente `id`, salvo que el listado ya tuviera un orden de negocio implícito, como "más reciente primero" en `Order`/`Enrollment`). No confiar en que Postgres devuelva las filas siempre en el mismo orden sin un `ORDER BY` explícito: por eso `ApplySort` siempre aplica alguna columna, nunca deja el query sin ordenar.
+`sortBy`/`sortDescending` viajan en `BaseSortPageRequest` (que extiende `BasePageRequest` agregándole solo esos dos campos, sin duplicar `PageIndex`/`PageSize`) — todo `<Entity>PageRequest` extiende `BaseSortPageRequest`, así que todo listado los soporta sin trabajo extra. Si algún listado necesitara **no** soportar sorting del cliente, extendería `BasePageRequest` directamente en vez de `BaseSortPageRequest` — hoy no hay ningún caso así, los 8 listados existentes soportan sorting. Cada `Service` define su propia whitelist de columnas ordenables (`SortableColumns`, ver sección 2.4) y la aplica con `QueryableSortExtensions.ApplySort`. Un `sortBy` vacío o no reconocido **nunca** rompe la query — cae en silencio al orden por defecto de ese listado (normalmente `id`, salvo que el listado ya tuviera un orden de negocio implícito, como "más reciente primero" en `Order`/`Enrollment`). No confiar en que Postgres devuelva las filas siempre en el mismo orden sin un `ORDER BY` explícito: por eso `ApplySort` siempre aplica alguna columna, nunca deja el query sin ordenar.
 
 ### Zona horaria en filtros de fecha
 
@@ -1230,18 +1252,31 @@ Todo filtro de rango de fecha (`startX`/`endX` en un `PageRequest`) usa `DateOnl
 
 La columna contra la que se compara, en cambio, es un `DateTime`/UTC real (`timestamp with time zone` en Postgres, forzado a `Kind=Utc` por el loop de `AppDbContext.OnModelCreating`). Convertir un `DateOnly` a los límites de ese rango tiene una trampa: `date.ToDateTime(TimeOnly.MinValue)` da `2026-08-07T00:00:00` con `Kind=Unspecified`, que termina interpretándose como **medianoche UTC**, no como medianoche en la zona horaria de quien usa la API. Para una empresa que opera desde Perú (UTC-5), eso desalinea el filtro hasta 5 horas: un registro creado a las 20:00 hora Lima del día 6 se guarda como `2026-08-07T01:00:00Z` y, con la conversión ingenua, cae bajo `startDate=2026-08-07` en vez de `2026-08-06` — para cualquier persona en Lima, ese registro "fue el 6".
 
-Por eso la conversión pasa por `Shared/Extensions/DateOnlyExtensions.cs`:
+La zona horaria de negocio tiene una **única fuente de verdad**, `Shared/Extensions/BusinessClock.cs`:
+
+```csharp
+public static class BusinessClock
+{
+    public static readonly TimeZoneInfo TimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Lima");
+
+    public static DateTime Now => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZone);
+
+    public static DateOnly Today => DateOnly.FromDateTime(Now);
+}
+```
+
+`TimeZone` es la **única línea a tocar** si la empresa opera desde otro huso horario — no hay una constante de timezone repetida por bounded context ni por archivo. `"America/Lima"` no tiene horario de verano (offset fijo todo el año), así que acá no hace falta lidiar con ambigüedad de DST; en un huso que sí lo tenga, `TimeZoneInfo` ya resuelve el offset correcto para cada fecha puntual. El id es un IANA time zone ID — .NET lo resuelve en cualquier plataforma (Windows incluido) desde .NET Core 3.0, sin necesitar ICU. `BusinessClock.Now`/`.Today` sirven para cualquier lugar donde "ahora" deba reflejar la hora de Perú en vez de la hora local del servidor (ej. Azure App Service en otra región) — `DateTime.Now`/`DateTime.Today` nunca deberían usarse para eso.
+
+`Shared/Extensions/DateOnlyExtensions.cs` reutiliza `BusinessClock.TimeZone` (no tiene su propia constante) para convertir los límites de un filtro de rango:
 
 ```csharp
 public static class DateOnlyExtensions
 {
-    private static readonly TimeZoneInfo BusinessTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Lima");
-
     public static DateTime ToStartOfBusinessDayUtc(this DateOnly date) =>
-        TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimeOnly.MinValue), BusinessTimeZone);
+        TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimeOnly.MinValue), BusinessClock.TimeZone);
 
     public static DateTime ToEndOfBusinessDayUtc(this DateOnly date) =>
-        TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimeOnly.MaxValue), BusinessTimeZone);
+        TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimeOnly.MaxValue), BusinessClock.TimeZone);
 }
 ```
 
@@ -1251,8 +1286,6 @@ Y el `Service` la usa así (mismo patrón en `BotLogService`, `ClientService`, `
 (!request.StartRegistrationDate.HasValue || client.RegistrationDate >= request.StartRegistrationDate.Value.ToStartOfBusinessDayUtc()) &&
 (!request.EndRegistrationDate.HasValue || client.RegistrationDate <= request.EndRegistrationDate.Value.ToEndOfBusinessDayUtc())
 ```
-
-`BusinessTimeZone` es la **única línea a tocar** si la empresa opera desde otro huso horario — no hay una constante de timezone repetida por bounded context. `"America/Lima"` no tiene horario de verano (offset fijo todo el año), así que acá no hace falta lidiar con ambigüedad de DST; en un huso que sí lo tenga, `TimeZoneInfo.ConvertTimeToUtc` ya resuelve el offset correcto para cada fecha puntual. El id es un IANA time zone ID — .NET lo resuelve en cualquier plataforma (Windows incluido) desde .NET Core 3.0, sin necesitar ICU.
 
 Un `Service` que agregue su propio filtro de rango de fecha **siempre** debe usar `DateOnly` + `ToStartOfBusinessDayUtc()`/`ToEndOfBusinessDayUtc()` — nunca `DateTime` crudo ni `.ToDateTime(TimeOnly.MinValue)` directo (eso reintroduce el desalineamiento de zona horaria).
 
@@ -1387,6 +1420,7 @@ Lista extraída de bugs encontrados y corregidos durante el desarrollo de este b
 - **Listados paginados sin `ORDER BY`**: varios `Service.ListPageAsync` no pasaban ningún `orderBy` al repositorio. Sin un `ORDER BY` explícito, Postgres no garantiza el mismo orden de filas entre una página y la siguiente — podía repetir o saltear registros al paginar. Corregido: todo listado ahora tiene un orden por defecto determinístico (ver "Sorting" en sección 4).
 - **Paréntesis faltante al convertir un filtro de rango de `DateOnly` a `DateTime`** (`BotLogService.ListPageAsync`): al cambiar `StartDate`/`EndDate` de `DateTime?` a `DateOnly?` (más preciso para un filtro que solo tiene sentido a nivel de día, no de hora — ver sección 4, "Zona horaria en filtros de fecha") se armó `log.Fecha >= request.StartDate.Value.ToDateTime(TimeOnly.MinValue) && (...)` sin cerrar el paréntesis que agrupaba el chequeo de `StartDate`. Por precedencia de operadores (`||` liga más flojo que `&&`), eso metió los chequeos de `EndDate`, `Mensaje` y `Falla` **dentro** del `||` de `StartDate` — compilaba sin error, pero cuando no se mandaba `StartDate` (el caso normal) esos tres filtros quedaban anulados en silencio. Se coló porque no había ningún test que combinara un filtro sin `StartDate` con otro filtro (`Falla`, `Mensaje`); el test `ListPageAsync_FiltersByFalla` que ya existía dejó de servir como red de seguridad porque tampoco mandaba `StartDate`, así que "pasaba" con el comportamiento roto. Moraleja: al tocar un filtro con múltiples cláusulas `(A || B) && (C || D) && ...`, contar paréntesis a mano no alcanza — correr el test de ese filtro específico (o agregar uno) y confirmar en rojo→verde.
 - **Día UTC en vez de día de negocio en filtros de fecha**: la primera versión de la conversión `DateOnly → DateTime` (`date.ToDateTime(TimeOnly.MinValue)`, con `Kind=Unspecified` reinterpretado como UTC) definía "el día" como el día calendario en UTC, no en la zona horaria de la empresa (Perú, UTC-5). Un registro creado a las 20:00 hora Lima ya había cruzado la medianoche en UTC, así que quedaba clasificado bajo el día siguiente. No llegó a producción: se detectó al aplicar el mismo patrón de `BotLogPageRequest` a los demás filtros de fecha (`Client`, `Order`, `Enrollment`, `Employee`) y razonar sobre el caso límite antes de darlo por terminado. Corregido centralizando la conversión en `DateOnlyExtensions.ToStartOfBusinessDayUtc()`/`ToEndOfBusinessDayUtc()` (sección 4), que resuelve el offset contra `America/Lima` en vez de asumir UTC.
+  - **Actualización**: la constante del huso horario vivía como un campo privado duplicado dentro de `DateOnlyExtensions`. Al agregar `BusinessClock` (pensado para exponer `Now`/`Today` en hora de Perú, útil para un servidor desplegado en otra región, ej. Azure en East US 2) se detectó la duplicación y se consolidó: `BusinessClock.TimeZone` es ahora la única fuente de verdad, y `DateOnlyExtensions` la reutiliza en vez de tener la suya. Ver sección 4.
 - **String interpolado sobre columnas de la entidad dentro de un filtro** (`OrderService.ListPageAsync`, filtro `ClientFullName`): `$"{order.Client.Name.ToLower()} {order.Client.LastName.ToLower()}".Contains(...)` compila a `string.Format(...)` porque el compilador de C# traduce cualquier `$"..."` asignado a `string` así — y como los argumentos son columnas de la entidad (no una variable local), EF Core tiene que traducir ese `string.Format` a SQL, y el proveedor de Npgsql no sabe cómo (`InvalidOperationException: Translation of method 'string.Format' failed`, **en runtime**, no en build, así que el `dotnet build` en verde no lo detecta). Reproducido en vivo contra Postgres real: `GET /api/v1/orders?clientFullName=Perez` devolvía 500. Corregido reemplazando la interpolación por concatenación con `+` (`order.Client.Name.ToLower() + " " + order.Client.LastName.ToLower()`), que sí se traduce (a `||` de Postgres). Regla general: nunca interpolar (`$"..."`) sobre una propiedad de la entidad dentro de un lambda de filtro — solo sobre variables locales/closures, que EF Core evalúa en memoria antes de traducir.
 - **`EF.Functions.ILike` rompe el patrón de test de este proyecto**: durante el arreglo anterior se probó usar `EF.Functions.ILike(...)` (más idiomático en Postgres, case-insensitive nativo vía `ILIKE`) en vez de `.ToLower().Contains(...)`. Compila y funciona contra Postgres real, pero la implementación CLR de `EF.Functions.ILike` tira `InvalidOperationException` a propósito si se ejecuta fuera de una traducción a SQL — y el helper `CaptureListPageFilter` de la sección 8.2 compila el filtro y lo ejecuta directo contra POCOs en memoria (LINQ to Objects), exactamente ese caso. El test de este filtro (`OrderServiceTests`) falló con `"The 'ILike' method is not supported because the query has switched to client-evaluation"`. Se optó por `.ToLower()`/`Contains()`/`+`, que funcionan tanto traducidos a SQL como ejecutados en memoria. Moraleja: cualquier método de `EF.Functions` (`ILike`, `Like`, funciones específicas de Postgres) es SQL-only — no usarlo en un filtro que se vaya a testear con este patrón de "compilar y ejecutar en memoria".
 - **`[Required]` no funciona sobre un value type no-nullable** (`SaveEmployeeResource.HireDate`, al convertirlo de `DateTime` autogenerado a `DateOnly` pedido por el cliente): `RequiredAttribute.IsValid(value)` solo chequea `value == null`. Un `DateOnly HireDate` (no nullable) nunca es `null` — si el JSON no manda `hireDate`, System.Text.Json lo deserializa como `default(DateOnly)` (`0001-01-01`), no como `null`, así que `[Required]` lo da por válido y `ModelState.IsValid` queda en `true` sin que el cliente haya mandado nada. Reproducido en vivo: `POST /api/v1/employees` sin `hireDate` devolvía **201** con `hireDate: 0001-01-01` en vez de **400**. Aplica igual a cualquier otro value type no-nullable (`int`, `bool`, `decimal`, `DateTime`, etc.) — no es específico de `DateOnly` ni un bug de este proyecto, es un comportamiento general de `RequiredAttribute` en .NET. Corregido cambiando la propiedad del `Save*Resource` a nullable (`DateOnly? HireDate`) manteniendo `[Required]`, y desenvolviendo con `.Value` en el `Mapping` (seguro porque el `Controller` ya devolvió `ValidationProblem(ModelState)` antes si vino `null`). Regla general: todo campo `[Required]` en un `Save*Resource` debe ser un tipo que pueda ser `null` de verdad — string, o `T?` para value types — nunca un value type no-nullable.
@@ -1533,3 +1567,117 @@ await contextB.SaveChangesAsync(); // DbUpdateConcurrencyException: contextB tie
 ```
 
 Resultado real contra Postgres: `contextA` guarda sin problemas; `contextB` lanza `DbUpdateConcurrencyException` con el mensaje estándar de EF ("...data may have been modified or deleted since entities were loaded..."). Después de esto se corrió la suite completa de `BackendEjemplo.Tests` (50/50 verde) y un smoke test de CRUD normal (`POST`/`PUT`/`DELETE` de `Client`) contra la API real para confirmar que el cambio no rompe el camino feliz.
+
+---
+
+## 10. Múltiples orígenes de datos (más de un `DbContext`)
+
+### 10.0. Cuándo aplica esta sección
+
+Hoy este proyecto tiene **un solo** origen de datos: `AppDbContext` sobre Postgres, compartido por los 4 bounded contexts. Esta sección solo aplica el día que la app necesite hablar con una **segunda** base de datos — típicamente una base legada de otro equipo (ej. un datawarehouse de BI en SQL Server), no una partición arbitraria de las tablas propias. No aplicar este patrón preventivamente: si todo vive en una sola base, un solo `AppDbContext`/`BaseRepository`/`UnitOfWork` sigue siendo lo correcto.
+
+### 10.1. Qué se duplica por cada origen nuevo y qué no
+
+- **`IBaseRepository<TEntity>`** (`Shared/Domain/Repositories/IBaseRepository.cs`) es agnóstico de `DbContext` — no referencia a `AppDbContext` ni a ningún proveedor en su firma. **Nunca se duplica**: cada origen nuevo lo *implementa* con su propia clase base, pero el contrato es uno solo para todo el proyecto.
+- **Todo lo que sí está atado a un `DbContext` concreto** se duplica, con un nombre que identifica el origen (`<DataSource>`, ej. `BescoBi`, `LegacyWarehouse`):
+  - `<DataSource>DbContext` — un `DbContext` propio, con su propio `OnModelCreating`/`ConfigureConventions`.
+  - `<DataSource>BaseRepository<TEntity>` — implementa el mismo `IBaseRepository<TEntity>` compartido, pero contra `<DataSource>DbContext`.
+  - `I<DataSource>UnitOfWork` / `<DataSource>UnitOfWork` — **interfaz propia, no la `IUnitOfWork` compartida**. Es la única pieza donde no alcanza con reusar el contrato genérico: si dos orígenes reutilizaran la misma interfaz `IUnitOfWork`, la inyección de dependencias no tendría forma de saber cuál de las dos implementaciones registradas corresponde a cada `Service` — cada origen necesita un tipo de interfaz distinto para que el constructor injection sea inambiguo.
+- **El origen original no se renombra**: `AppDbContext`, `BaseRepository<TEntity>`, `IUnitOfWork`/`UnitOfWork` siguen tal cual están documentados en la sección 0 — ya cumplen el rol de "el conjunto del origen primario", no hace falta tocarlos al agregar un segundo origen.
+
+### 10.2. Plantilla (adaptada de un proyecto real de la empresa con un origen adicional de BI)
+
+```csharp
+// Shared/Persistence/<DataSource>/<DataSource>BaseRepository.cs
+public abstract class <DataSource>BaseRepository<TEntity>(<DataSource>DbContext context)
+    : IBaseRepository<TEntity> where TEntity : class
+{
+    protected readonly <DataSource>DbContext _context = context;
+    protected const int MaxPageSize = 100;
+
+    // AddAsync, AddRangeAsync, GetQuery, ListAsync, ListPageAsync, Remove, Update:
+    // copiar 1:1 desde Shared/Persistence/Repositories/BaseRepository.cs (sección 0.5) —
+    // es exactamente el mismo código, solo cambia el tipo de _context en el constructor.
+    // No hay lógica nueva que escribir acá.
+}
+```
+
+```csharp
+// Shared/Domain/Repositories/I<DataSource>UnitOfWork.cs
+public interface I<DataSource>UnitOfWork
+{
+    Task CompleteAsync(CancellationToken cancellationToken = default);
+}
+
+// Shared/Persistence/<DataSource>/<DataSource>UnitOfWork.cs
+public class <DataSource>UnitOfWork(<DataSource>DbContext context) : I<DataSource>UnitOfWork
+{
+    public async Task CompleteAsync(CancellationToken cancellationToken = default)
+    {
+        await context.SaveChangesAsync(cancellationToken);
+    }
+}
+```
+
+```csharp
+// Shared/Persistence/<DataSource>/<DataSource>DbContext.cs
+public class <DataSource>DbContext(DbContextOptions<<DataSource>DbContext> options) : DbContext(options)
+{
+    public DbSet<Entidad1> Entidad1 { get; set; }
+    public DbSet<Entidad2> Entidad2 { get; set; }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // Suprime el warning de EF Core 10 sobre propiedades decimal sin precisión
+        // explícita (riesgo de truncar datos silenciosamente al mapear). Aplicarlo acá
+        // en vez de por propiedad si el origen tiene muchas columnas decimal (típico en
+        // bases de BI/reporting).
+        configurationBuilder.Properties<decimal>().HavePrecision(18, 6);
+        configurationBuilder.Properties<decimal?>().HavePrecision(18, 6);
+    }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Si el origen es una base externa que esta app no crea ni migra (ver 10.4),
+        // mapear tal cual está la tabla real, incluido su schema si no es el default:
+        modelBuilder.Entity<Entidad1>().ToTable("NombreTablaReal", schema: "ods");
+
+        // Si una tabla es de solo lectura y no tiene una PK que EF pueda inferir
+        // (ej. una vista o una tabla de reporte regenerada por un proceso externo):
+        modelBuilder.Entity<Entidad2>().HasNoKey().ToTable("OtraTablaReal", schema: "dbo");
+
+        base.OnModelCreating(modelBuilder);
+    }
+}
+```
+
+### 10.3. Registro en `Program.cs`
+
+Mismo patrón que `AppDbContext` (sección 0.6), en paralelo — nunca reemplazando el registro existente:
+
+```csharp
+var dataSourceConnectionString = builder.Configuration.GetConnectionString("<DataSource>");
+
+builder.Services.AddDbContext<<DataSource>DbContext>(options =>
+{
+    options.UseSqlServer(dataSourceConnectionString); // o UseNpgsql, según el origen real
+});
+
+builder.Services.AddScoped<I<DataSource>UnitOfWork, <DataSource>UnitOfWork>();
+// + los I<Entity>Repository/<Entity>Repository de ese bounded context, igual que siempre.
+```
+
+`appsettings.json`/user-secrets necesita una entrada nueva bajo `ConnectionStrings` (`ConnectionStrings:<DataSource>`), separada de `DefaultConnection` — nunca reusar la misma cadena de conexión reinterpretada para dos orígenes distintos.
+
+Si el origen usa un motor de base de datos distinto al de `AppDbContext` (ej. Postgres para lo propio, SQL Server para una base legada), el `.csproj` necesita el paquete EF Core de ese proveedor además de `Npgsql.EntityFrameworkCore.PostgreSQL` (ej. `Microsoft.EntityFrameworkCore.SqlServer`) — son independientes, cada `DbContext` se configura con el suyo.
+
+### 10.4. Migraciones: quién es dueño del esquema
+
+- **`dotnet-ef` exige `--context` explícito en cuanto hay 2+ `DbContext` en el proyecto** (`dotnet tool run dotnet-ef migrations add <Name> --context <DataSource>DbContext --project ... --output-dir Shared/Persistence/<DataSource>/Migrations`) — sin `--context`, falla con "More than one DbContext was found". Usar un `--output-dir` separado por origen para no mezclar migraciones de bases distintas en la misma carpeta.
+- **Solo migrar lo que esta app efectivamente posee.** Si el origen adicional es una base externa cuyo esquema ya existe y no lo controla este proyecto (el caso típico: un datawarehouse de BI, tablas que otro sistema crea y llena) — **nunca generar migraciones para ese `DbContext` ni llamar `.Migrate()` sobre él en el startup**. Ese `DbContext` se usa solo para leer/escribir contra tablas ya existentes, mapeadas con `.ToTable(...)` (y `.HasNoKey()` si aplica) como en 10.2.
+- Es válido que un mismo `<DataSource>DbContext` mezcle ambos casos: algunas entidades que esta app sí crea y migra (ej. una tabla de log propia) junto con otras que solo lee de una base externa que no controla — la decisión de migrar o no se toma **por entidad/tabla**, no por `DbContext` completo.
+
+### 10.5. Advertencias reales
+
+- **No hay atomicidad entre `DbContext` distintos.** Si un `Service` necesita escribir en dos orígenes "a la vez" (ej. actualizar algo en `AppDbContext` y loguearlo en `<DataSource>DbContext`), cada `CompleteAsync()` es un `SaveChangesAsync()` independiente sobre una conexión distinta — no hay una transacción distribuida automática. Si falla el segundo `CompleteAsync()` después de que el primero ya confirmó, el sistema queda en un estado a medias. No asumir atomicidad: ordenar las escrituras de forma que la menos reversible vaya al final, o diseñar la segunda escritura para que sea reintentable/idempotente.
+- **`AddRangeAsync` (sección 0.5) sigue trackeando cada entidad individualmente** — para cargas masivas de verdad (miles/millones de filas, típico al migrar datos hacia/desde un origen de BI), ni siquiera `AddRangeAsync` alcanza en performance. Ese caso se resuelve con `SqlBulkCopy`/SQL crudo (`ExecuteSqlRawAsync`), evitando por completo el change tracker de EF Core — y esas tablas ni siquiera necesitan un `Repository`/`Service` en el sentido de este documento, se escriben directo desde donde corresponda.

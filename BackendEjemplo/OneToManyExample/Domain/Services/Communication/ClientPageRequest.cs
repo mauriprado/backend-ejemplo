@@ -2,7 +2,7 @@
 
 namespace BackendEjemplo.OneToManyExample.Domain.Services.Communication
 {
-    public class ClientPageRequest: BasePageRequest
+    public class ClientPageRequest: BaseSortPageRequest
     {
         public string? FullName { get; set; }
         public string? Email { get; set; }

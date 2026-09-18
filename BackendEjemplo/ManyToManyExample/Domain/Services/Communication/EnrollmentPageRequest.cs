@@ -3,7 +3,7 @@ using BackendEjemplo.Shared.Domain.Services.Communication;
 
 namespace BackendEjemplo.ManyToManyExample.Domain.Services.Communication
 {
-    public class EnrollmentPageRequest: BasePageRequest
+    public class EnrollmentPageRequest: BaseSortPageRequest
     {
         public long? StudentId { get; set; }
         public long? CourseId { get; set; }

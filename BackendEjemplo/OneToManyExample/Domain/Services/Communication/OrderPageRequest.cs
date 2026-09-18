@@ -3,7 +3,7 @@ using BackendEjemplo.Shared.Domain.Services.Communication;
 
 namespace BackendEjemplo.OneToManyExample.Domain.Services.Communication
 {
-    public class OrderPageRequest: BasePageRequest
+    public class OrderPageRequest: BaseSortPageRequest
     {
         public DateOnly? StartOrderDate { get; set; }
         public DateOnly? EndOrderDate { get; set; }

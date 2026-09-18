@@ -71,16 +71,20 @@ export interface PageResponse<T> {
   totalRecords: number;
 }
 
-// base-page-request.model.ts
+// base-page-request.model.ts — paginación pura, sin sorting
 export interface BasePageRequest {
   pageIndex?: number;
   pageSize?: number;
+}
+
+// base-sort-page-request.model.ts — la que usa todo *PageRequest real del backend
+export interface BaseSortPageRequest extends BasePageRequest {
   sortBy?: string;
   sortDescending?: boolean;
 }
 ```
 
-`sortBy`/`sortDescending` los soporta todo listado del backend (heredan de `BasePageRequest` del lado C# también), pero **cada recurso solo acepta un subconjunto de nombres de columna** (la whitelist `SortableColumns` de su `Service`, ver `ARCHITECTURE.md` sección 2.4/4) — un `sortBy` no reconocido no rompe nada, el backend cae en silencio a su orden por defecto. Si un componente de listado expone una UI de ordenamiento (ej. click en el header de una columna), los valores que puede mandar en `sortBy` deben coincidir con esa whitelist del backend, no inventarse del lado del cliente.
+`sortBy`/`sortDescending` los soporta todo listado del backend (heredan de `BaseSortPageRequest` del lado C#, que a su vez extiende `BasePageRequest` sin duplicar `pageIndex`/`pageSize`), pero **cada recurso solo acepta un subconjunto de nombres de columna** (la whitelist `SortableColumns` de su `Service`, ver `ARCHITECTURE.md` sección 2.4/4) — un `sortBy` no reconocido no rompe nada, el backend cae en silencio a su orden por defecto. Si un componente de listado expone una UI de ordenamiento (ej. click en el header de una columna), los valores que puede mandar en `sortBy` deben coincidir con esa whitelist del backend, no inventarse del lado del cliente. `BasePageRequest` (sin sorting) queda disponible por si algún recurso futuro necesita excluirlo — hoy los 8 recursos existentes extienden `BaseSortPageRequest`.
 
 ### Por recurso (ejemplo con `Client`/`Order`, ver `OneToManyExample` en el backend)
 
@@ -103,7 +107,7 @@ export interface SaveClient {
   phoneNumber: string;
 }
 
-export interface ClientPageRequest extends BasePageRequest {
+export interface ClientPageRequest extends BaseSortPageRequest {
   fullName?: string;
   email?: string;
   phoneNumber?: string;
